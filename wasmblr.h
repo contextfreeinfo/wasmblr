@@ -30,7 +30,7 @@ class Local {
   friend CodeGenerator;
 };
 
-class I32 { // TODO I64
+class I32 {
  public:
   operator uint8_t();
   void const_(int32_t i);
