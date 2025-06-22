@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <stack>
 #include <string>
 #include <unordered_map>
@@ -29,7 +30,7 @@ class Local {
   friend CodeGenerator;
 };
 
-class I32 {
+class I32 { // TODO I64
  public:
   operator uint8_t();
   void const_(int32_t i);
@@ -79,7 +80,60 @@ class I32 {
   friend CodeGenerator;
 };
 
-class F32 {
+class I64 {
+ public:
+  operator uint8_t();
+  void const_(int64_t i);
+  void clz();
+  void ctz();
+  void popcnt();
+  void lt_s();
+  void lt_u();
+  void gt_s();
+  void gt_u();
+  void le_s();
+  void le_u();
+  void ge_s();
+  void ge_u();
+  void add();
+  void sub();
+  void mul();
+  void div_s();
+  void div_u();
+  void rem_s();
+  void rem_u();
+  void and_();
+  void or_();
+  void xor_();
+  void shl();
+  void shr_s();
+  void shr_u();
+  void rotl();
+  void rotr();
+  void eqz();
+  void eq();
+  void ne();
+
+  void load(uint32_t alignment = 1, uint32_t offset = 0);
+  void store(uint32_t alignment = 1, uint32_t offset = 0);
+
+  void load8_s(uint32_t alignment = 1, uint32_t offset = 0);
+  void load8_u(uint32_t alignment = 1, uint32_t offset = 0);
+  void load16_s(uint32_t alignment = 1, uint32_t offset = 0);
+  void load16_u(uint32_t alignment = 1, uint32_t offset = 0);
+  void load32_s(uint32_t alignment = 1, uint32_t offset = 0);
+  void load32_u(uint32_t alignment = 1, uint32_t offset = 0);
+  void store8(uint32_t alignment = 1, uint32_t offset = 0);
+  void store16(uint32_t alignment = 1, uint32_t offset = 0);
+  void store32(uint32_t alignment = 1, uint32_t offset = 0);
+
+ private:
+  I64(CodeGenerator& cg_) : cg(cg_) {}
+  CodeGenerator& cg;
+  friend CodeGenerator;
+};
+
+class F32 { // TODO F64
  public:
   operator uint8_t();
   void const_(float f);
@@ -233,6 +287,7 @@ struct CodeGenerator {
   // API
   Local local;
   I32 i32;
+  I64 i64;
   F32 f32;
   V128 v128;
   Memory memory;
@@ -260,7 +315,8 @@ struct CodeGenerator {
   // Implementation
 
   CodeGenerator()
-      : local(*this), i32(*this), f32(*this), v128(*this), memory(*this) {}
+      : local(*this), i32(*this), i64(*this), f32(*this), v128(*this),
+        memory(*this) {}
   CodeGenerator(const CodeGenerator&) = delete;
   CodeGenerator(CodeGenerator&&) = delete;
 
@@ -275,7 +331,7 @@ struct CodeGenerator {
   using memarg = std::pair<uint32_t, uint32_t>;
 
   // From LLVM
-  std::vector<uint8_t> encode_signed(int32_t n) {
+  std::vector<uint8_t> encode_signed(int64_t n) {
     std::vector<uint8_t> out;
     auto more = true;
     do {
@@ -409,6 +465,16 @@ inline void I32::const_(int32_t i) {
   cg.push(cg.i32);
 }
 
+inline I64::operator uint8_t() {
+  return 0x7e;
+}
+
+inline void I64::const_(int64_t i) {
+  cg.emit(0x42);
+  cg.emit(cg.encode_signed(i));
+  cg.push(cg.i64);
+}
+
 inline F32::operator uint8_t() {
   return 0x7d;
 }
@@ -500,6 +566,47 @@ LOAD_OP(I32, load16_u, 0x2f, i32);
 STORE_OP(I32, store, 0x36);
 STORE_OP(I32, store8, 0x3a);
 STORE_OP(I32, store16, 0x3b);
+
+UNARY_OP(I64, clz, 0x79, i64, i64);
+UNARY_OP(I64, ctz, 0x7a, i64, i64);
+UNARY_OP(I64, popcnt, 0x7b, i64, i64);
+BINARY_OP(I64, lt_s, 0x53, i64, i64, i32);
+BINARY_OP(I64, lt_u, 0x54, i64, i64, i32);
+BINARY_OP(I64, gt_s, 0x55, i64, i64, i32);
+BINARY_OP(I64, gt_u, 0x56, i64, i64, i32);
+BINARY_OP(I64, le_s, 0x57, i64, i64, i32);
+BINARY_OP(I64, le_u, 0x58, i64, i64, i32);
+BINARY_OP(I64, ge_s, 0x59, i64, i64, i32);
+BINARY_OP(I64, ge_u, 0x5a, i64, i64, i32);
+BINARY_OP(I64, add, 0x7c, i64, i64, i64);
+BINARY_OP(I64, sub, 0x7d, i64, i64, i64);
+BINARY_OP(I64, mul, 0x7e, i64, i64, i64);
+BINARY_OP(I64, div_s, 0x7f, i64, i64, i64);
+BINARY_OP(I64, div_u, 0x80, i64, i64, i64);
+BINARY_OP(I64, rem_s, 0x81, i64, i64, i64);
+BINARY_OP(I64, rem_u, 0x82, i64, i64, i64);
+BINARY_OP(I64, and_, 0x83, i64, i64, i64);
+BINARY_OP(I64, or_, 0x84, i64, i64, i64);
+BINARY_OP(I64, xor_, 0x85, i64, i64, i64);
+BINARY_OP(I64, shl, 0x86, i64, i64, i64);
+BINARY_OP(I64, shr_s, 0x87, i64, i64, i64);
+BINARY_OP(I64, shr_u, 0x88, i64, i64, i64);
+BINARY_OP(I64, rotl, 0x89, i64, i64, i64);
+BINARY_OP(I64, rotr, 0x8a, i64, i64, i64);
+BINARY_OP(I64, eqz, 0x50, i64, i64, i32);
+BINARY_OP(I64, eq, 0x51, i64, i64, i32);
+BINARY_OP(I64, ne, 0x52, i64, i64, i32);
+LOAD_OP(I64, load, 0x29, i64);
+LOAD_OP(I64, load8_s, 0x30, i64);
+LOAD_OP(I64, load8_u, 0x31, i64);
+LOAD_OP(I64, load16_s, 0x32, i64);
+LOAD_OP(I64, load16_u, 0x33, i64);
+LOAD_OP(I64, load32_s, 0x34, i64);
+LOAD_OP(I64, load32_u, 0x35, i64);
+STORE_OP(I64, store, 0x37);
+STORE_OP(I64, store8, 0x3c);
+STORE_OP(I64, store16, 0x3d);
+STORE_OP(I64, store32, 0x3e);
 
 BINARY_OP(F32, eq, 0x5b, f32, f32, i32);
 BINARY_OP(F32, ne, 0x5c, f32, f32, i32);

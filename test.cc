@@ -142,6 +142,34 @@ void testLoop() {
   testJS(c, "console.log(instance.exports.loop());", "10\n");
 }
 
+void testLoop64() {
+  struct Code : wasmblr::CodeGenerator {
+    Code() : wasmblr::CodeGenerator() {
+      auto loop_fn = function({}, {i64}, [&]() {
+        auto i = local(i64);
+
+        loop(void_);
+        {
+          local.get(i);
+          i64.const_(1);
+          i64.add();
+          local.set(i);
+
+          local.get(i);
+          i64.const_(10);
+          i64.lt_s();
+          br_if(0);
+        }
+        end();
+        local.get(i);
+      });
+      export_(loop_fn, "loop");
+    }
+  };
+  Code c;
+  testJS(c, "console.log(instance.exports.loop());", "10n\n");
+}
+
 void testMemory() {
   struct Code : wasmblr::CodeGenerator {
     Code() : wasmblr::CodeGenerator() { memory(1, 10).export_("mem"); }
@@ -251,6 +279,7 @@ int main() {
   testRecursive();
   testIfStatement();
   testLoop();
+  testLoop64();
   testMemory();
   testStore();
   testSIMD();
