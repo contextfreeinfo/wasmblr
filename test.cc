@@ -93,6 +93,37 @@ void testRecursive() {
   testJS(c, "console.log(instance.exports.factorial(7));", "5040\n");
 }
 
+void testRecursive64() {
+  struct Code : wasmblr::CodeGenerator {
+    // NB: Needs to be a class variable,
+    // the function body is evaluated later
+    uint32_t factorial;
+    Code() : wasmblr::CodeGenerator() {
+      factorial = function({f64}, {f64}, [&]() {
+        local.get(0);
+        f64.const_(1.0f);
+        f64.lt();
+        if_(f64);
+        { f64.const_(1.0f); }
+        else_();
+        {
+          local.get(0);
+          local.get(0);
+          f64.const_(1.0f);
+          f64.sub();
+          call(factorial);
+          f64.mul();
+        }
+        end();
+      });
+      export_(factorial, "factorial");
+    }
+  };
+  Code c;
+  testJS(c, "console.log(instance.exports.factorial(4));", "24\n");
+  testJS(c, "console.log(instance.exports.factorial(7));", "5040\n");
+}
+
 void testIfStatement() {
   struct Code : wasmblr::CodeGenerator {
     Code() : wasmblr::CodeGenerator() {
@@ -277,6 +308,7 @@ int main() {
   testBasic();
   testConstant();
   testRecursive();
+  testRecursive64();
   testIfStatement();
   testLoop();
   testLoop64();
