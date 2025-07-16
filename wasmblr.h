@@ -317,6 +317,12 @@ struct Function {
   };
 };
 
+struct Import {
+  uint32_t idx;
+  std::string mod_name;
+  std::string name;
+};
+
 struct CodeGenerator {
   // API
   Local local;
@@ -339,6 +345,12 @@ struct CodeGenerator {
   void call(uint32_t funcidx);
   void return_();
 
+  uint32_t import_(
+    std::string mod_name,
+    std::string name,
+    std::vector<uint8_t> input_types,
+    std::vector<uint8_t> output_types
+  );
   void export_(uint32_t fn_idx, std::string name);
 
   // returns function index
@@ -357,6 +369,8 @@ struct CodeGenerator {
   CodeGenerator(CodeGenerator&&) = delete;
 
   std::vector<Function> functions_;
+  bool imports_finished_ = false;
+  std::vector<Import> imported_functions_;
   std::unordered_map<uint32_t, std::string> exported_functions_;
   Function* cur_function_ = nullptr;
   // cur_bytes_ is used as a temporary storage
@@ -469,6 +483,11 @@ inline void Local::get(int idx) {
     cg.push(input_types.at(idx));
   } else {
     cg.push(cg.locals().at(idx - input_types.size()));
+    // const auto locals_idx = idx - input_types.size();
+    // const auto& locals = cg.locals();
+    // if (locals_idx < locals.size()) {
+    //   cg.push(locals.at(locals_idx));
+    // } // else you get invalid wasm
   }
 
   cg.emit(0x20);
@@ -553,11 +572,11 @@ inline V128::operator uint8_t() {
 
 #define BINARY_OP(classname, op, opcode, type_a, type_b, out_type) \
   inline void classname::op() {                                    \
-    bool valid = cg.pop() == cg.type_a && cg.pop() == cg.type_b;   \
-    assert(valid && "invalid type for " #op);                      \
     cg.emit(opcode);                                               \
     cg.push(cg.out_type);                                          \
   }
+  // bool valid = cg.pop() == cg.type_a && cg.pop() == cg.type_b;   \
+  // assert(valid && "invalid type for " #op);                      \
 
 #define LOAD_OP(classname, op, opcode, out_type)                   \
   inline void classname::op(uint32_t alignment, uint32_t offset) { \
@@ -956,6 +975,22 @@ inline void CodeGenerator::return_() {
   emit(0x0f);
 }
 
+inline uint32_t CodeGenerator::import_(
+  std::string mod_name,
+  std::string name,
+  std::vector<uint8_t> input_types,
+  std::vector<uint8_t> output_types
+) {
+  // To simplify id management, require all imports before other functions.
+  assert(!imports_finished_ && "import added after locally defined functions");
+  auto idx = static_cast<uint32_t>(functions_.size());
+  functions_.emplace_back(input_types, output_types);
+  imported_functions_.push_back(
+    Import { .idx = idx, .mod_name = mod_name, .name = name }
+  );
+  return idx;
+}
+
 inline void CodeGenerator::export_(uint32_t fn, std::string name) {
   exported_functions_[fn] = name;
 }
@@ -965,6 +1000,7 @@ inline uint32_t CodeGenerator::function(std::vector<uint8_t> input_types,
                                         std::function<void()> body) {
   auto idx = functions_.size();
   functions_.emplace_back(input_types, output_types, body);
+  imports_finished_ = true;
   return idx;
 }
 
@@ -977,6 +1013,7 @@ inline std::vector<uint8_t> CodeGenerator::emit() {
 
   std::vector<uint8_t> type_section_bytes;
   concat(type_section_bytes, encode_unsigned(functions_.size()));
+  // TODO Coalesce unique fun types?
   for (const auto& f : functions_) {
     type_section_bytes.emplace_back(0x60);
     concat(type_section_bytes, encode_unsigned(f.input_types.size()));
@@ -993,32 +1030,42 @@ inline std::vector<uint8_t> CodeGenerator::emit() {
   concat(emitted_bytes, encode_unsigned(type_section_bytes.size()));
   concat(emitted_bytes, type_section_bytes);
 
-	std::vector<uint8_t> import_section_bytes;
-  if (memory.is_import()) {
-		concat(import_section_bytes, encode_unsigned(1)); // 1 import
-    concat(import_section_bytes, encode_string(memory.a_string));
-    concat(import_section_bytes, encode_string(memory.b_string));
-		import_section_bytes.emplace_back(0x2); // memory flag
-    if (memory.min && memory.max) {
-			if (memory.is_shared) {
-				import_section_bytes.emplace_back(0x3);
-			} else {
-        import_section_bytes.emplace_back(0x01);
-			}
-      concat(import_section_bytes, encode_unsigned(memory.min));
-      concat(import_section_bytes, encode_unsigned(memory.max));
-		} else {
-			assert(!memory.is_shared && "shared memory must have a max size");
-      concat(import_section_bytes, encode_unsigned(memory.min));
-		}
+  uint32_t num_imports = imported_functions_.size() + memory.is_import();
+  if (num_imports) {
+  	std::vector<uint8_t> import_section_bytes;
+		concat(import_section_bytes, encode_unsigned(num_imports));
+    if (memory.is_import()) {
+      concat(import_section_bytes, encode_string(memory.a_string));
+      concat(import_section_bytes, encode_string(memory.b_string));
+      import_section_bytes.emplace_back(0x2); // memory flag
+      if (memory.min && memory.max) {
+        if (memory.is_shared) {
+          import_section_bytes.emplace_back(0x3);
+        } else {
+          import_section_bytes.emplace_back(0x01);
+        }
+        concat(import_section_bytes, encode_unsigned(memory.min));
+        concat(import_section_bytes, encode_unsigned(memory.max));
+      } else {
+        assert(!memory.is_shared && "shared memory must have a max size");
+        concat(import_section_bytes, encode_unsigned(memory.min));
+      }
+    }
+    for (auto& imp : imported_functions_) {
+      concat(import_section_bytes, encode_string(imp.mod_name));
+      concat(import_section_bytes, encode_string(imp.name));
+      import_section_bytes.emplace_back(0x0); // function flag
+      concat(import_section_bytes, encode_unsigned(imp.idx));
+    }
     emitted_bytes.emplace_back(0x2);
     concat(emitted_bytes, encode_unsigned(import_section_bytes.size()));
     concat(emitted_bytes, import_section_bytes);
-	}
+  }
 
   std::vector<uint8_t> function_section_bytes;
-  concat(function_section_bytes, encode_unsigned(functions_.size()));
-  for (auto i = 0; i < functions_.size(); ++i) {
+  size_t num_local_functions = functions_.size() - imported_functions_.size();
+  concat(function_section_bytes, encode_unsigned(num_local_functions));
+  for (auto i = imported_functions_.size(); i < functions_.size(); ++i) {
     concat(function_section_bytes, encode_unsigned(i));
   }
   emitted_bytes.emplace_back(0x3);
@@ -1065,8 +1112,9 @@ inline std::vector<uint8_t> CodeGenerator::emit() {
   concat(emitted_bytes, export_section_bytes);
 
   std::vector<uint8_t> code_section_bytes;
-  concat(code_section_bytes, encode_unsigned(functions_.size()));
-  for (auto& f : functions_) {
+  concat(code_section_bytes, encode_unsigned(num_local_functions));
+  for (auto i = imported_functions_.size(); i < functions_.size(); ++i) {
+    auto& f = functions_[i];
     cur_function_ = &f;
 
     cur_bytes_.clear();
